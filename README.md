@@ -1,7 +1,7 @@
 # ms_auth_mc
 This library is for logging into a minecraft account using the microsoft oauth2 device flow: https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-device-code
 ## Example
-```
+```rs
 const CID: &str = "client id from an azure application"
 fn main() {
 let client = &reqwest::blocking::Client::new();
