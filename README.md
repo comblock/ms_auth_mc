@@ -4,15 +4,18 @@ This library is for logging into a minecraft account by using the microsoft oaut
 ```rs
 const CID: &str = "client id from an azure application"
 fn main() {
-   let client = &reqwest::blocking::Client::new();
-   let device_code = ms_auth_mc::DeviceCode::new(CID, None, client).unwrap();
+    let client = &reqwest::blocking::Client::new();
+    let device_code = ms_auth_mc::DeviceCode::new(CID, None, client).unwrap();
+    
+    match &device_code.inner {
+        None => (),
+        Some(inner) => {
+            println!("{}", inner.message)
+        }
+    }
    
-   if !device_code.cached {
-     println!("{}", device_code.message)
-   }
-   
-   let mca = device_code.authenticate(client).unwrap(); // Never use unwrap here, it's used in this example for simplicity
-   println!("{:?}", mca)
+    let mca = device_code.authenticate(client).unwrap(); // Never use unwrap here, it's used in this example for simplicity
+    println!("{:?}", mca)
 }
 ```
 You can create your own cid by making an azure application.

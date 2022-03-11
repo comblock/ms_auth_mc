@@ -6,10 +6,13 @@
 //!    let client = &reqwest::blocking::Client::new();
 //!    let device_code = ms_auth_mc::DeviceCode::new(CID, None, client).unwrap();
 //!    
-//!    if !device_code.cached {
-//!      println!("{}", device_code.message)
+//!    match &device_code.inner {
+//!        None => (),
+//!        Some(inner) => {
+//!            println!("{}", inner.message)
+//!        }
 //!    }
-//!    
+//!        
 //!    let mca = device_code.authenticate(client).unwrap(); // Never use unwrap here, it's used in this example for simplicity
 //!    println!("{:?}", mca)
 //! }
@@ -228,20 +231,21 @@ struct MsAuthError {
     // pub error_uri: String,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct DeviceCode {
+    pub inner: Option<DeviceCodeInner>,
+    cid: String,
+    cache: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceCodeInner {
     pub user_code: String,
     device_code: String,
     pub verification_uri: String,
     expires_in: i64,
     interval: u64,
     pub message: String,
-    #[serde(skip)]
-    cid: String,
-    #[serde(skip)]
-    pub cached: bool,
-    #[serde(skip)]
-    cache: String,
 }
 
 impl DeviceCode {
@@ -253,9 +257,10 @@ impl DeviceCode {
             Some(file) => (Path::new(file), file),
             None => (Path::new(CACHE_FILE_NAME), CACHE_FILE_NAME),
         };
-
-        let mut device_code: DeviceCode;
-        if !path.exists() {
+        
+        let device_code: DeviceCode;
+        let device_code_inner: Option<DeviceCodeInner>;
+        if !path.is_file() {
             let device_resp = client
                 .get("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
                 .query(&[
@@ -265,74 +270,67 @@ impl DeviceCode {
                 .header("content-length", "0")
                 .send()?
                 .error_for_status()?;
-            device_code = serde_json::from_reader(device_resp)?;
-            device_code.cached = true;
+            device_code_inner = Some(serde_json::from_reader(device_resp)?);
         } else {
-            device_code = DeviceCode {
-                user_code: String::new(),
-                device_code: String::new(),
-                verification_uri: String::new(),
-                expires_in: 0,
-                interval: 0,
-                message: String::new(),
-                cid: String::new(),
-                cached: false,
-                cache: String::from(name),
-            }
+            device_code_inner = None;
         }
-        device_code.cid = String::from(cid);
-
+        device_code = DeviceCode {
+            inner: device_code_inner,
+            cid: String::from(cid),
+            cache: String::from(name),
+        };
         Ok(device_code)
     }
 
     fn auth_ms(&self, client: &Client) -> anyhow::Result<Option<MsAuth>> {
-        if !self.cached {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(self.interval + 1));
-
-                let code_resp = client
-                    .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-                    .form(&[
-                        ("client_id", &self.cid as &str),
-                        ("scope", "XboxLive.signin offline_access"),
-                        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                        ("device_code", &self.device_code),
-                    ])
-                    .send()?;
-                match code_resp.status() {
-                    StatusCode::BAD_REQUEST => {
-                        let ms_auth: MsAuthError = serde_json::from_reader(code_resp)?;
-                        match &ms_auth.error as &str {
-                            "authorization_pending" => continue,
-                            "authorization_declined" => {
-                                return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
-                            }
-                            "expired_token" => {
-                                return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
-                            }
-                            "invalid_grant" => {
-                                return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
-                            }
-                            _ => {
-                                continue;
+        match &self.inner {
+            Some(inner) => {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(inner.interval + 1));
+    
+                    let code_resp = client
+                        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                        .form(&[
+                            ("client_id", &self.cid as &str),
+                            ("scope", "XboxLive.signin offline_access"),
+                            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                            ("device_code", &inner.device_code),
+                        ])
+                        .send()?;
+                    match code_resp.status() {
+                        StatusCode::BAD_REQUEST => {
+                            let ms_auth: MsAuthError = serde_json::from_reader(code_resp)?;
+                            match &ms_auth.error as &str {
+                                "authorization_pending" => continue,
+                                "authorization_declined" => {
+                                    return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
+                                }
+                                "expired_token" => {
+                                    return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
+                                }
+                                "invalid_grant" => {
+                                    return Err(anyhow::Error::msg(format!("{}", ms_auth.error)))
+                                }
+                                _ => {
+                                    continue;
+                                }
                             }
                         }
-                    }
-                    StatusCode::OK => {
-                        let mut ms_auth: MsAuth = serde_json::from_reader(code_resp)?;
-                        ms_auth.expires_after = ms_auth.expires_in + chrono::Utc::now().timestamp();
-                        return Ok(Some(ms_auth));
-                    }
-                    _ => {
-                        return Err(anyhow::Error::msg(format!(
-                            "unexpected response code: {}",
-                            code_resp.status().as_str()
-                        )))
+                        StatusCode::OK => {
+                            let mut ms_auth: MsAuth = serde_json::from_reader(code_resp)?;
+                            ms_auth.expires_after = ms_auth.expires_in + chrono::Utc::now().timestamp();
+                            return Ok(Some(ms_auth));
+                        }
+                        _ => {
+                            return Err(anyhow::Error::msg(format!(
+                                "unexpected response code: {}",
+                                code_resp.status().as_str()
+                            )))
+                        }
                     }
                 }
-            }
-        } else {
-            Ok(None)
+            },
+            None => Ok(None)               
         }
     }
 
@@ -340,17 +338,16 @@ impl DeviceCode {
     /// It might block for a while if the access token hasn't been cached yet.
     pub fn authenticate(&self, client: &Client) -> anyhow::Result<Auth> {
         let path: &Path = Path::new(&self.cache);
-
-        let msa = match path.exists() {
-            false => {
+        let msa = match self.inner {
+            Some(_) => {
                 let msa = self.auth_ms(client)?;
                 fs::write(path, serde_json::ser::to_string(&msa)?)?;
                 match msa {
                     Some(x) => x,
-                    None => return Err(anyhow::Error::msg("Cache file doesn't exist but Msauth returned None which can only happen if a cache file exists"))
+                    None => unreachable!()
                 }
-            }
-            true => {
+            },
+            None => {
                 let mut msa: MsAuth = serde_json::from_str(&fs::read_to_string(path)? as &str)?;
                 if msa.refresh(&self.cid, client)? {
                     fs::write(path, serde_json::ser::to_string(&msa)?)?;
