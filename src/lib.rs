@@ -1,21 +1,18 @@
 //! This library is for logging into a minecraft account using the microsoft oauth2 device flow: https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-device-code
 //! # Example
-//! ```
-//! const CID: &str = "client id from an azure application"
-//! fn main() {
-//!    let client = &reqwest::blocking::Client::new();
-//!    let device_code = ms_auth_mc::DeviceCode::new(CID, None, client).unwrap();
-//!    
-//!    match &device_code.inner {
-//!        None => (),
-//!        Some(inner) => {
-//!            println!("{}", inner.message)
-//!        }
-//!    }
-//!        
-//!    let mca = device_code.authenticate(client).unwrap(); // Never use unwrap here, it's used in this example for simplicity
-//!    println!("{:?}", mca)
+//! ```no_run
+//! use {ms_auth_mc::*, reqwest::blocking::Client};
+//! 
+//! let client = Client::new();
+//! let device_code =
+//!     DeviceCode::new("389b1b32-b5d5-43b2-bddc-84ce938d6737"/* You would ideally replace this with your own CID which you can get from creating an azure application*/, None, &client).unwrap();
+//! 
+//! if let Some(inner) = &device_code.inner {
+//!    println!("{}", inner.message);
 //! }
+//! 
+//! let auth = device_code.authenticate(&client).unwrap();
+//! println!("{}", auth.token);
 //! ```
 
 use {
