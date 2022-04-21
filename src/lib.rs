@@ -20,10 +20,26 @@ use {
     reqwest::{blocking::Client, StatusCode},
     serde_derive::{Deserialize, Serialize},
     serde_json::json,
-    std::{fs, path::Path, string::String},
+    std::{fs, path::Path, string::String, io::Read, io::Write},
+    byteorder::{ReadBytesExt, WriteBytesExt, LE},
+    base64::{read::DecoderReader, write::EncoderWriter},
 };
 
 const CACHE_FILE_NAME: &str = "auth.cache";
+
+pub fn write_string_to(w: &mut impl Write, s: &String) -> anyhow::Result<()> {
+    let len = s.len();
+    w.write_u16::<LE>(len as u16)?;
+    w.write_all(s.as_bytes())?;
+    Ok(())
+}
+
+pub fn read_string_from(r: &mut impl Read) -> anyhow::Result<String> {
+    let len = r.read_u16::<LE>()?;
+    let mut buf = vec![0; len as usize];
+    r.read_exact(&mut buf)?;
+    Ok(String::from_utf8(buf)?)
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Auth {
@@ -42,8 +58,8 @@ struct McProfile {
 struct McAuth {
     pub access_token: String,
     pub expires_in: i64,
-    #[serde(skip)]
-    pub expires_after: i64,
+    //#[serde(skip)]
+    //pub expires_after: i64,
 }
 
 impl McAuth {
@@ -88,8 +104,8 @@ impl XstsAuth {
             .send()?
             .error_for_status()?;
 
-        let mut mc_auth: McAuth = serde_json::from_reader(mc_resp)?;
-        mc_auth.expires_after = mc_auth.expires_in + chrono::Utc::now().timestamp();
+        let mc_auth: McAuth = serde_json::from_reader(mc_resp)?;
+        //mc_auth.expires_after = mc_auth.expires_in + chrono::Utc::now().timestamp();
         Ok(mc_auth)
     }
 }
@@ -185,6 +201,35 @@ impl MsAuth {
             .error_for_status()?;
         let xbl_auth: XblAuth = serde_json::from_reader(xbl_resp)?;
         Ok(xbl_auth)
+    }
+
+    pub fn write_to(&self, w: &mut impl Write) -> anyhow::Result<()> {
+        let mut w = EncoderWriter::new(w, base64::STANDARD);
+        let mut buf = Vec::new();
+        buf.write_i64::<LE>(self.expires_after)?;
+        write_string_to(&mut buf, &self.access_token)?;
+        write_string_to(&mut buf, &self.refresh_token)?;
+        let len = buf.len();
+        w.write_u16::<LE>(len as u16)?;
+        w.write_all(&buf)?;
+        Ok(())
+    }
+
+    pub fn read_from(r: &mut impl Read) -> anyhow::Result<MsAuth> {
+        let mut r = DecoderReader::new(r, base64::STANDARD);
+        let len = r.read_u16::<LE>()? as usize;
+        let mut buf = vec![0; len];
+        r.read_exact(&mut buf)?;
+        let mut buf = buf.as_slice();
+        let expires_after = buf.read_i64::<LE>()?;
+        let access_token = read_string_from(&mut buf)?;
+        let refresh_token = read_string_from(&mut buf)?;
+        Ok(MsAuth {
+            expires_in: 0,
+            access_token,
+            refresh_token,
+            expires_after,
+        })
     }
 }
 
@@ -300,17 +345,14 @@ impl DeviceCode {
         let path: &Path = Path::new(&self.cache);
         let msa = match self.inner {
             Some(_) => {
-                let msa = self.auth_ms(client)?;
-                fs::write(path, serde_json::ser::to_string(&msa)?)?;
-                match msa {
-                    Some(x) => x,
-                    None => unreachable!(),
-                }
+                let msa = self.auth_ms(client)?.unwrap();
+                msa.write_to(&mut fs::File::create(path)?)?;
+                msa
             }
             None => {
-                let mut msa: MsAuth = serde_json::from_str(&fs::read_to_string(path)? as &str)?;
+                let mut msa: MsAuth = MsAuth::read_from(&mut fs::File::open(path)?)?;
                 if msa.refresh(&self.cid, client)? {
-                    fs::write(path, serde_json::ser::to_string(&msa)?)?;
+                    msa.write_to(&mut fs::File::create(path)?)?;
                 }
                 msa
             }
@@ -324,7 +366,6 @@ impl DeviceCode {
             uuid: profile.id,
             token: mca.access_token,
         };
-
         Ok(auth)
     }
 }
