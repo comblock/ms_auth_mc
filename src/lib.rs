@@ -2,27 +2,27 @@
 //! # Example
 //! ```no_run
 //! use {ms_auth_mc::*, reqwest::blocking::Client};
-//! 
+//!
 //! let client = Client::new();
 //! let device_code =
 //!     DeviceCode::new("389b1b32-b5d5-43b2-bddc-84ce938d6737"/* You would ideally replace this with your own CID which you can get from creating an azure application*/, None, &client).unwrap();
-//! 
+//!
 //! if let Some(inner) = &device_code.inner {
 //!    println!("{}", inner.message);
 //! }
-//! 
+//!
 //! let auth = device_code.authenticate(&client).unwrap();
 //! println!("{}", auth.token);
 //! ```
 
 use {
     anyhow::bail,
+    serde_json::json,
+    base64::{read::DecoderReader, write::EncoderWriter},
+    byteorder::{ReadBytesExt, WriteBytesExt, LE},
     reqwest::{blocking::Client, StatusCode},
     serde_derive::{Deserialize, Serialize},
-    serde_json::json,
-    std::{fs, path::Path, string::String, io::Read, io::Write},
-    byteorder::{ReadBytesExt, WriteBytesExt, LE},
-    base64::{read::DecoderReader, write::EncoderWriter},
+    std::{fs, io::Read, io::Write, path::Path, string::String},
 };
 
 const CACHE_FILE_NAME: &str = "auth.cache";

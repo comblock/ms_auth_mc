@@ -16,7 +16,7 @@ fn auth() {
     let auth = device_code.authenticate(&client).unwrap();
     println!("{}", auth.token);
 
-	std::fs::remove_file(std::path::Path::new("auth.cache")).unwrap();
+    std::fs::remove_file(std::path::Path::new("auth.cache")).unwrap();
 
     let device_code =
         DeviceCode::new("389b1b32-b5d5-43b2-bddc-84ce938d6737", None, &client).unwrap();
