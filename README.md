@@ -16,3 +16,6 @@ let auth = device_code.authenticate(&client).unwrap();
 println!("{}", auth.token);
 ```
 You can create your own cid by making an azure application.
+
+
+## ms_auth_mc has been moved to the auth feature of the minceraft crate, it will no longer receive updates here!
